@@ -10,6 +10,7 @@
 
 import pygame
 import simpy
+import random
 
 #     _____      _
 #    / ____|    | |
@@ -57,6 +58,55 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 CHOCOLATE = (210, 105, 30)
 
+#SIM
+RANDOM_SEED = 42
+NEW_OPPS = 5  # Total number of opportunities
+INTERVAL_OPPS = 10.0  # Generate new opportunities roughly every x seconds
+MIN_PATIENCE = 1  # Min. customer patience
+MAX_PATIENCE = 3  # Max. customer patience
+
+#     _____ _____ __  __
+#    / ____|_   _|  \/  |
+#   | (___   | | | \  / |
+#    \___ \  | | | |\/| |
+#    ____) |_| |_| |  | |
+#   |_____/|_____|_|  |_|
+#
+
+def source(env, number, interval, srv_team):
+    """Source generates opportunities randomly"""
+    for i in range(number):
+        c = customer(env, 'Customer%02d' % i, srv_team, time_in_queue=12.0)
+        env.process(c)
+        t = random.expovariate(1.0 / interval)
+        yield env.timeout(t)
+
+def customer(env, name, srv_team, time_in_queue):
+    """Customer arrives, is served and leaves."""
+    arrive = env.now
+    print('%7.4f %s: Here I am' % (arrive, name))
+
+    with srv_team.request() as req:
+        patience = random.uniform(MIN_PATIENCE, MAX_PATIENCE)
+        # Wait for the Service team or abort at the end of our tether
+        results = yield req | env.timeout(patience)
+
+        wait = env.now - arrive
+
+        if req in results:
+            # We got to the project
+            print('%7.4f %s: Waited %6.3f' % (env.now, name, wait))
+
+            tib = random.expovariate(1.0 / time_in_queue)
+            yield env.timeout(tib)
+            print('%7.4f %s: Finished' % (env.now, name))
+
+        else:
+            # We reneged
+            print('%7.4f %s: RENEGED after %6.3f' % (env.now, name, wait))
+
+
+#
 #    _____  _               _
 #   |  __ \(_)             | |
 #   | |  | |_ _ __ ___  ___| |_ ___  _ __
@@ -65,6 +115,8 @@ CHOCOLATE = (210, 105, 30)
 #   |_____/|_|_|  \___|\___|\__\___/|_|
 #
 #
+
+
 class Director:
     def __init__(self, start_scene):
         self.active_scene = start_scene
@@ -143,7 +195,7 @@ class SIMScene(Scene):
 
     def render(self):
         SCREEN.fill(BLACK)
-        text = pygame.font.Font(None, 64).render("SIM FIELD", 1, WHITE)
+        text = pygame.font.Font(None, 64).render("SIM ALPHA FIELD", 1, WHITE)
         rect = text.get_rect()
         rect.centerx = SCREEN_WIDTH // 2
         rect.bottom = SCREEN_HEIGHT // 2
@@ -168,7 +220,13 @@ if __name__ == "__main__":
     env = simpy.Environment()
     first_scene = SIMScene()
     game_dir = Director(first_scene)
+    random.seed(RANDOM_SEED)
+    service_div = simpy.Resource(env, capacity=1)
+    env.process(source(env, NEW_OPPS, INTERVAL_OPPS, service_div))
+    env.run()
+    print('SIM OVER')
     game_dir.action()
+    print('GAME OVER')
     pygame.quit()
     print('END SIM.........................')
 
