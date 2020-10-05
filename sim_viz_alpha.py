@@ -289,17 +289,26 @@ class SIMScene(Scene):
                 if event.key == pygame.K_SPACE:
                     print("SPACE KEY PRESSED")
                     self.next_scene = None
-        while record.sim_queue and ((record.sim_queue[0][0] * 200) <= pygame.time.get_ticks()):
-            self.process_sim_event()
-            print(f'PYGAME TICKS: {pygame.time.get_ticks()}')
+
+        queue_peek = len(record.sim_queue) > 0
+        while queue_peek:
+            if (record.sim_queue[0][0] * 100) <= pygame.time.get_ticks():
+                print(f'SIM TICKS: {record.sim_queue[0][0] * 100:.2f}')
+                self.process_sim_event()
+                print(f'PYGAME TICKS: {pygame.time.get_ticks()}')
+                queue_peek = len(record.sim_queue) > 0
+            else:
+                queue_peek = False
 
     def update(self):
-        if pygame.sprite.groupcollide(self.LOST_GROUP, self.PLACED_GROUP, False, False):
-            self.LOST_GROUP.update()
-        else:
-            for sprite in self.LOST_GROUP:
-                self.PLACED_GROUP.add(sprite)
-            self.LOST_GROUP.empty()
+        for opp_sprite in self.LOST_GROUP.sprites():
+            if pygame.sprite.spritecollideany(opp_sprite, self.PLACED_GROUP):
+                opp_sprite.update()
+            else:
+                print("GOT HERE!")
+                self.LOST_GROUP.remove(opp_sprite)
+                self.PLACED_GROUP.add(opp_sprite)
+
 
     def render(self):
         # Set background color
