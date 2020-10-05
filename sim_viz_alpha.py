@@ -11,6 +11,8 @@
 import pygame
 import simpy
 import random
+import sys
+from collections import deque
 
 #     _____      _
 #    / ____|    | |
@@ -23,6 +25,9 @@ import random
 
 # initialize pygame
 pygame.init()
+
+# initialize simpy
+env = simpy.Environment()
 
 # Timer
 clock = pygame.time.Clock()
@@ -60,10 +65,32 @@ CHOCOLATE = (210, 105, 30)
 
 #SIM
 RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
 NEW_OPPS = 5  # Total number of opportunities
 INTERVAL_OPPS = 10.0  # Generate new opportunities roughly every x seconds
 MIN_PATIENCE = 1  # Min. customer patience
 MAX_PATIENCE = 3  # Max. customer patience
+
+
+
+
+#     ____  ____       _ ______ _____ _______ _____
+#    / __ \|  _ \     | |  ____/ ____|__   __/ ____|
+#   | |  | | |_) |    | | |__ | |       | | | (___
+#   | |  | |  _ < _   | |  __|| |       | |  \___ \
+#   | |__| | |_) | |__| | |___| |____   | |  ____) |
+#    \____/|____/ \____/|______\_____|  |_| |_____/
+#
+#
+
+class SIMObserver:
+    def __init__(self):
+        self.sim_queue = deque()
+
+    def add_sim_event(self, sim_event):
+        self.sim_queue.append(sim_event)
+        print(self.sim_queue)
+
 
 #     _____ _____ __  __
 #    / ____|_   _|  \/  |
@@ -73,37 +100,56 @@ MAX_PATIENCE = 3  # Max. customer patience
 #   |_____/|_____|_|  |_|
 #
 
-def source(env, number, interval, srv_team):
-    """Source generates opportunities randomly"""
-    for i in range(number):
-        c = customer(env, 'Customer%02d' % i, srv_team, time_in_queue=12.0)
-        env.process(c)
-        t = random.expovariate(1.0 / interval)
-        yield env.timeout(t)
+class Source:
+    def __init__(self, env):
+        self.env = env
+        self.service_div = simpy.Resource(self.env, capacity=1)
 
-def customer(env, name, srv_team, time_in_queue):
-    """Customer arrives, is served and leaves."""
-    arrive = env.now
-    print('%7.4f %s: Here I am' % (arrive, name))
+        self.env.process(self.source(env, NEW_OPPS, INTERVAL_OPPS, self.service_div))
+        event_log = (self.env.now, "SOURCE_A", "SOURCE")
+        record.add_sim_event(event_log)
 
-    with srv_team.request() as req:
-        patience = random.uniform(MIN_PATIENCE, MAX_PATIENCE)
-        # Wait for the Service team or abort at the end of our tether
-        results = yield req | env.timeout(patience)
+    def source(self, env, number, interval, service_div):
+        """Source generates opportunities randomly"""
+        for i in range(number):
+            opp = Opportunity(env, f'Opp{i}', service_div, time_in_queue=12.0)
+            t = random.expovariate(1.0 / interval)
+            yield env.timeout(t)
 
-        wait = env.now - arrive
+class Opportunity:
+    def __init__(self, env, name, service_div, time_in_queue):
+        self.env = env
+        self.name = name
+        self.service_div = service_div
+        self.time_in_queue = time_in_queue
 
-        if req in results:
-            # We got to the project
-            print('%7.4f %s: Waited %6.3f' % (env.now, name, wait))
+        self.env.process(self.create_opp(self.env, self.name, self.service_div, self.time_in_queue))
 
-            tib = random.expovariate(1.0 / time_in_queue)
-            yield env.timeout(tib)
-            print('%7.4f %s: Finished' % (env.now, name))
+    def create_opp(self, env, name, service_div, time_in_queue):
+        """Opportunity arrives, is served or abandon."""
+        arrive = env.now
+        print(f'{arrive:.2f} {name}: NEW OPP')
+        event_log = (self.env.now, name, "OPP")
+        record.add_sim_event(event_log)
 
-        else:
-            # We reneged
-            print('%7.4f %s: RENEGED after %6.3f' % (env.now, name, wait))
+        with service_div.request() as req:
+            patience = random.uniform(MIN_PATIENCE, MAX_PATIENCE)
+            # Wait for the Service team or abort at the end of our tether
+            results = yield req | env.timeout(patience)
+
+            wait = env.now - arrive
+
+            if req in results:
+                # We got to the project
+                print(f'{env.now:.2f} {name}: Waiting {wait:.2f}')
+
+                tib = random.expovariate(1.0 / time_in_queue)
+                yield env.timeout(tib)
+                print(f'{env.now:.2f} {name}: Finished')
+
+            else:
+                # We reneged
+                print(f'{env.now:.2f} {name}: RENEGED after {wait:.2f}')
 
 
 #
@@ -177,10 +223,49 @@ class Scene:
         self.next_scene = None
 
 
+class OppEntity(pygame.sprite.Sprite):
+    def __init__(self, opp_info):
+        super(OppEntity, self).__init__()
+        self.opp_info = opp_info
+        self.opp_time = opp_info[0]
+        self.opp_name = opp_info[1]
+        self.opp_type = opp_info[2]
+
+        self.surf = pygame.Surface((50, 50), pygame.SRCALPHA)
+        self.rect = self.surf.get_rect(center=(200, 200))
+        self.light_green = (000, 200, 100, 255)
+        pygame.draw.polygon(self.surf, self.light_green, [(12, 0), (36, 0), (50, 25), (36, 50), (12, 50), (0, 25)])
+
+
+
 class SIMScene(Scene):
     def __init__(self):
         super().__init__()
-        print("SIM Scene")
+        print("VIZ Scene")
+        self.SOURCE_A_SURF = None
+        self.SOURCE_A_RECT = None
+        self.OPP_LIST = []
+        self.OPP_RECT_LIST = []
+        self.OPP_SPRITE_GROUP = pygame.sprite.Group()
+
+    def sim_create_source(self, create_source_event):
+        if create_source_event[1] == "SOURCE_A":
+            self.SOURCE_A_SURF = pygame.Surface((100, 100))
+            self.SOURCE_A_RECT = self.SOURCE_A_SURF.get_rect(center=(200,200))
+            light_grey = (200, 200, 200)
+            pygame.draw.polygon(self.SOURCE_A_SURF, light_grey, [(0,0), (100,0), (50,100)])
+
+    def process_sim_event(self):
+        next_sim_event = record.sim_queue.popleft()
+        if next_sim_event[2] == "SOURCE":
+            print("FOUND A SOURCE CREATION EVENT")
+            self.sim_create_source(next_sim_event)
+        if next_sim_event[2] == "OPP":
+            print("FOUND AN OPP CREATION EVENT")
+            new_opp = OppEntity(next_sim_event)
+            self.OPP_LIST.append(new_opp)
+            self.OPP_RECT_LIST.append(new_opp.rect)
+            self.OPP_SPRITE_GROUP.add(new_opp)
 
     def process_input(self, events, pressed_keys):
         for event in events:
@@ -189,17 +274,36 @@ class SIMScene(Scene):
                 if event.key == pygame.K_SPACE:
                     print("SPACE KEY PRESSED")
                     self.next_scene = None
+        while record.sim_queue and ((record.sim_queue[0][0] * 100) <= pygame.time.get_ticks()):
+            self.process_sim_event()
+            print(f'PYGAME TICKS: {pygame.time.get_ticks()}')
 
     def update(self):
-        pass
+        for opp in self.OPP_LIST:
+            if self.SOURCE_A_RECT.colliderect(opp.rect):
+                opp.rect.x += 5
+            # if opp.OPP_RECT.collidelist(self.OPP_RECT_LIST) >= 0:
+            #     opp.OPP_RECT.y += 1
+            sprite = pygame.sprite.spritecollideany(opp, self.OPP_SPRITE_GROUP)
+            if sprite:
+                if sprite.opp_name != opp.opp_name:
+                    opp.rect.y += 20
 
     def render(self):
+        # Set background color
         SCREEN.fill(BLACK)
-        text = pygame.font.Font(None, 64).render("SIM ALPHA FIELD", 1, WHITE)
+        # Render Text
+        text = pygame.font.Font(None, 64).render("SIM ALPHA", 1, WHITE)
         rect = text.get_rect()
         rect.centerx = SCREEN_WIDTH // 2
         rect.bottom = SCREEN_HEIGHT // 2
         SCREEN.blit(text, rect)
+        # Render SIM Objects
+        SCREEN.blit(self.SOURCE_A_SURF, self.SOURCE_A_RECT)
+#        for opp in self.OPP_LIST:
+#            SCREEN.blit(opp.OPP_SURF, opp.OPP_RECT)
+        for entity in self.OPP_SPRITE_GROUP:
+            SCREEN.blit(entity.surf, entity.rect)
 
     def terminate(self):
         self.next_scene = None
@@ -216,18 +320,23 @@ class SIMScene(Scene):
 # START THE SIM
 if __name__ == "__main__":
     # Setup and start the simulation
-    print('VIZ SIM ALPHA')
-    env = simpy.Environment()
-    first_scene = SIMScene()
-    game_dir = Director(first_scene)
-    random.seed(RANDOM_SEED)
-    service_div = simpy.Resource(env, capacity=1)
-    env.process(source(env, NEW_OPPS, INTERVAL_OPPS, service_div))
+    print('START VIZ SIM ALPHA....................')
+
+    # RUN SIMULATION FIRST
+    record = SIMObserver()
+    opportunities = Source(env)
+    print('SIM START')
     env.run()
     print('SIM OVER')
+
+    # RUN SIM VIZ
+    print('VIZ START')
+    first_scene = SIMScene()
+    game_dir = Director(first_scene)
     game_dir.action()
-    print('GAME OVER')
+    print('VIZ OVER')
     pygame.quit()
-    print('END SIM.........................')
+    print('END SIM ALPHA.........................')
+    sys.exit()
 
 
