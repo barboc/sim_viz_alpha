@@ -236,6 +236,22 @@ class OppEntity(pygame.sprite.Sprite):
         self.light_green = (000, 200, 100, 255)
         pygame.draw.polygon(self.surf, self.light_green, [(12, 0), (36, 0), (50, 25), (36, 50), (12, 50), (0, 25)])
 
+    def update(self, *args):
+        self.rect.y += 5
+
+
+class SourceEntity(pygame.sprite.Sprite):
+    def __init__(self, source_info):
+        super(SourceEntity, self).__init__()
+        self.source_info = source_info
+        self.source_time = source_info[0]
+        self.source_name = source_info[1]
+        self.source_type = source_info[2]
+
+        self.surf = pygame.Surface((100, 100), pygame.SRCALPHA)
+        self.rect = self.surf.get_rect(center=(200, 200))
+        light_grey = (200, 200, 200)
+        pygame.draw.polygon(self.surf, light_grey, [(0, 0), (100, 0), (50, 100)])
 
 
 class SIMScene(Scene):
@@ -246,14 +262,13 @@ class SIMScene(Scene):
         self.SOURCE_A_RECT = None
         self.OPP_LIST = []
         self.OPP_RECT_LIST = []
-        self.OPP_SPRITE_GROUP = pygame.sprite.Group()
+        self.LOST_GROUP = pygame.sprite.Group()
+        self.PLACED_GROUP = pygame.sprite.Group()
 
     def sim_create_source(self, create_source_event):
         if create_source_event[1] == "SOURCE_A":
-            self.SOURCE_A_SURF = pygame.Surface((100, 100))
-            self.SOURCE_A_RECT = self.SOURCE_A_SURF.get_rect(center=(200,200))
-            light_grey = (200, 200, 200)
-            pygame.draw.polygon(self.SOURCE_A_SURF, light_grey, [(0,0), (100,0), (50,100)])
+            new_source = SourceEntity(create_source_event)
+            self.PLACED_GROUP.add(new_source)
 
     def process_sim_event(self):
         next_sim_event = record.sim_queue.popleft()
@@ -265,7 +280,7 @@ class SIMScene(Scene):
             new_opp = OppEntity(next_sim_event)
             self.OPP_LIST.append(new_opp)
             self.OPP_RECT_LIST.append(new_opp.rect)
-            self.OPP_SPRITE_GROUP.add(new_opp)
+            self.LOST_GROUP.add(new_opp)
 
     def process_input(self, events, pressed_keys):
         for event in events:
@@ -274,20 +289,17 @@ class SIMScene(Scene):
                 if event.key == pygame.K_SPACE:
                     print("SPACE KEY PRESSED")
                     self.next_scene = None
-        while record.sim_queue and ((record.sim_queue[0][0] * 100) <= pygame.time.get_ticks()):
+        while record.sim_queue and ((record.sim_queue[0][0] * 200) <= pygame.time.get_ticks()):
             self.process_sim_event()
             print(f'PYGAME TICKS: {pygame.time.get_ticks()}')
 
     def update(self):
-        for opp in self.OPP_LIST:
-            if self.SOURCE_A_RECT.colliderect(opp.rect):
-                opp.rect.x += 5
-            # if opp.OPP_RECT.collidelist(self.OPP_RECT_LIST) >= 0:
-            #     opp.OPP_RECT.y += 1
-            sprite = pygame.sprite.spritecollideany(opp, self.OPP_SPRITE_GROUP)
-            if sprite:
-                if sprite.opp_name != opp.opp_name:
-                    opp.rect.y += 20
+        if pygame.sprite.groupcollide(self.LOST_GROUP, self.PLACED_GROUP, False, False):
+            self.LOST_GROUP.update()
+        else:
+            for sprite in self.LOST_GROUP:
+                self.PLACED_GROUP.add(sprite)
+            self.LOST_GROUP.empty()
 
     def render(self):
         # Set background color
@@ -299,10 +311,9 @@ class SIMScene(Scene):
         rect.bottom = SCREEN_HEIGHT // 2
         SCREEN.blit(text, rect)
         # Render SIM Objects
-        SCREEN.blit(self.SOURCE_A_SURF, self.SOURCE_A_RECT)
-#        for opp in self.OPP_LIST:
-#            SCREEN.blit(opp.OPP_SURF, opp.OPP_RECT)
-        for entity in self.OPP_SPRITE_GROUP:
+        for entity in self.PLACED_GROUP:
+            SCREEN.blit(entity.surf, entity.rect)
+        for entity in self.LOST_GROUP:
             SCREEN.blit(entity.surf, entity.rect)
 
     def terminate(self):
