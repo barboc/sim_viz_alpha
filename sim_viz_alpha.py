@@ -13,6 +13,7 @@ import simpy
 import random
 import sys
 from collections import deque
+import math
 
 #     _____      _
 #    / ____|    | |
@@ -66,7 +67,7 @@ CHOCOLATE = (210, 105, 30)
 #SIM
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)
-NEW_OPPS = 5  # Total number of opportunities
+NEW_OPPS = 25  # Total number of opportunities
 INTERVAL_OPPS = 10.0  # Generate new opportunities roughly every x seconds
 MIN_PATIENCE = 1  # Min. customer patience
 MAX_PATIENCE = 3  # Max. customer patience
@@ -235,10 +236,14 @@ class OppEntity(pygame.sprite.Sprite):
         self.rect = self.surf.get_rect(center=(200, 200))
         self.light_green = (000, 200, 100, 255)
         pygame.draw.polygon(self.surf, self.light_green, [(12, 0), (36, 0), (50, 25), (36, 50), (12, 50), (0, 25)])
+        self.default_motion_rads = math.radians(random.randint(0, 360))
+        self.motion_speed = 12
 
     def update(self, *args):
-        self.rect.y += 5
-
+        cos_rads = math.cos(self.default_motion_rads)
+        sin_rads = math.sin(self.default_motion_rads)
+        self.rect.y += (self.motion_speed * sin_rads)
+        self.rect.x += (self.motion_speed * cos_rads)
 
 class SourceEntity(pygame.sprite.Sprite):
     def __init__(self, source_info):
