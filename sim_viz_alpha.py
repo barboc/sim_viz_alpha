@@ -67,12 +67,10 @@ CHOCOLATE = (210, 105, 30)
 #SIM
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)
-NEW_OPPS = 25  # Total number of opportunities
+NEW_OPPS = 5  # Total number of opportunities
 INTERVAL_OPPS = 10.0  # Generate new opportunities roughly every x seconds
 MIN_PATIENCE = 1  # Min. customer patience
 MAX_PATIENCE = 3  # Max. customer patience
-
-
 
 
 #     ____  ____       _ ______ _____ _______ _____
@@ -105,6 +103,8 @@ class Source:
     def __init__(self, env):
         self.env = env
         self.service_div = simpy.Resource(self.env, capacity=1)
+        event_log = (self.env.now, "RESOURCE_A", "RESOURCE")
+        record.add_sim_event(event_log)
 
         self.env.process(self.source(env, NEW_OPPS, INTERVAL_OPPS, self.service_div))
         event_log = (self.env.now, "SOURCE_A", "SOURCE")
@@ -225,15 +225,16 @@ class Scene:
 
 
 class OppEntity(pygame.sprite.Sprite):
-    def __init__(self, opp_info):
+    def __init__(self, opp_info, location):
         super(OppEntity, self).__init__()
-        self.opp_info = opp_info
-        self.opp_time = opp_info[0]
-        self.opp_name = opp_info[1]
-        self.opp_type = opp_info[2]
+        self.info = opp_info
+        self.time = opp_info[0]
+        self.name = opp_info[1]
+        self.type = opp_info[2]
+        self.location = location
 
         self.surf = pygame.Surface((50, 50), pygame.SRCALPHA)
-        self.rect = self.surf.get_rect(center=(200, 200))
+        self.rect = self.surf.get_rect(center=self.location)
         self.light_green = (000, 200, 100, 255)
         pygame.draw.polygon(self.surf, self.light_green, [(12, 0), (36, 0), (50, 25), (36, 50), (12, 50), (0, 25)])
         self.default_motion_rads = math.radians(random.randint(0, 360))
@@ -246,61 +247,79 @@ class OppEntity(pygame.sprite.Sprite):
         self.rect.x += (self.motion_speed * cos_rads)
 
 class SourceEntity(pygame.sprite.Sprite):
-    def __init__(self, source_info):
+    def __init__(self, source_info, location):
         super(SourceEntity, self).__init__()
-        self.source_info = source_info
-        self.source_time = source_info[0]
-        self.source_name = source_info[1]
-        self.source_type = source_info[2]
+        self.info = source_info
+        self.time = source_info[0]
+        self.name = source_info[1]
+        self.type = source_info[2]
+        self.location = location
 
         self.surf = pygame.Surface((100, 100), pygame.SRCALPHA)
-        self.rect = self.surf.get_rect(center=(200, 200))
-        light_grey = (200, 200, 200)
-        pygame.draw.polygon(self.surf, light_grey, [(0, 0), (100, 0), (50, 100)])
+        self.rect = self.surf.get_rect(center=self.location)
+        self.light_grey = (200, 200, 200)
+        pygame.draw.polygon(self.surf, self.light_grey, [(0, 0), (100, 0), (50, 100)])
+
+
+class ResourceEntity(pygame.sprite.Sprite):
+    def __init__(self, resource_info, location):
+        super(ResourceEntity, self).__init__()
+        self.info = resource_info
+        self.time = resource_info[0]
+        self.name = resource_info[1]
+        self.type = resource_info[2]
+        self.location = location
+
+        self.surf = pygame.Surface((100, 100), pygame.SRCALPHA)
+        self.rect = self.surf.get_rect(center=self.location)
+        self.light_blue = (000, 000, 200)
+        pygame.draw.ellipse(self.surf, self.light_blue, self.surf.get_rect())
 
 
 class SIMScene(Scene):
     def __init__(self):
         super().__init__()
         print("VIZ Scene")
-        self.SOURCE_A_SURF = None
-        self.SOURCE_A_RECT = None
-        self.OPP_LIST = []
-        self.OPP_RECT_LIST = []
+
+        self.scene_setup = {"SOURCE_A": (200, 200),
+                            "RESOURCE_A": (1500, 300)}
+
         self.LOST_GROUP = pygame.sprite.Group()
         self.PLACED_GROUP = pygame.sprite.Group()
 
+    def sim_create_resource(self, create_resource_event):
+        if create_resource_event[1] == "RESOURCE_A":
+            new_resource = ResourceEntity(create_resource_event, self.scene_setup["RESOURCE_A"])
+            self.PLACED_GROUP.add(new_resource)
+            print("GOT HERE!!")
+            print(new_resource.rect)
+
     def sim_create_source(self, create_source_event):
         if create_source_event[1] == "SOURCE_A":
-            new_source = SourceEntity(create_source_event)
+            new_source = SourceEntity(create_source_event, self.scene_setup["SOURCE_A"])
             self.PLACED_GROUP.add(new_source)
 
     def process_sim_event(self):
         next_sim_event = record.sim_queue.popleft()
         if next_sim_event[2] == "SOURCE":
-            print("FOUND A SOURCE CREATION EVENT")
             self.sim_create_source(next_sim_event)
         if next_sim_event[2] == "OPP":
-            print("FOUND AN OPP CREATION EVENT")
-            new_opp = OppEntity(next_sim_event)
-            self.OPP_LIST.append(new_opp)
-            self.OPP_RECT_LIST.append(new_opp.rect)
+            new_opp = OppEntity(next_sim_event, self.scene_setup["SOURCE_A"])
             self.LOST_GROUP.add(new_opp)
+        if next_sim_event[2] == "RESOURCE":
+            self.sim_create_resource(next_sim_event)
+
 
     def process_input(self, events, pressed_keys):
         for event in events:
             if event.type == pygame.KEYDOWN:
-                print("KEY PRESSED")
                 if event.key == pygame.K_SPACE:
-                    print("SPACE KEY PRESSED")
                     self.next_scene = None
 
         queue_peek = len(record.sim_queue) > 0
         while queue_peek:
             if (record.sim_queue[0][0] * 100) <= pygame.time.get_ticks():
-                print(f'SIM TICKS: {record.sim_queue[0][0] * 100:.2f}')
                 self.process_sim_event()
-                print(f'PYGAME TICKS: {pygame.time.get_ticks()}')
                 queue_peek = len(record.sim_queue) > 0
             else:
                 queue_peek = False
@@ -310,7 +329,6 @@ class SIMScene(Scene):
             if pygame.sprite.spritecollideany(opp_sprite, self.PLACED_GROUP):
                 opp_sprite.update()
             else:
-                print("GOT HERE!")
                 self.LOST_GROUP.remove(opp_sprite)
                 self.PLACED_GROUP.add(opp_sprite)
 
