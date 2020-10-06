@@ -12,7 +12,7 @@ import pygame
 import simpy
 import random
 import sys
-from collections import deque
+from collections import deque, namedtuple
 import math
 
 #     _____      _
@@ -82,6 +82,11 @@ MAX_PATIENCE = 3  # Max. customer patience
 #
 #
 
+# Create named tuple that will record the SIM in the deque
+Log_Event = namedtuple('Log_Event', ['time', 'name', 'type', 'action'])
+
+
+# Class for recording SIM events to the deque for later playback.
 class SIMObserver:
     def __init__(self):
         self.sim_queue = deque()
@@ -103,11 +108,11 @@ class Source:
     def __init__(self, env):
         self.env = env
         self.service_div = simpy.Resource(self.env, capacity=1)
-        event_log = (self.env.now, "RESOURCE_A", "RESOURCE")
+        event_log = Log_Event(self.env.now, "RESOURCE_A", "RESOURCE", "CREATE")
         record.add_sim_event(event_log)
 
         self.env.process(self.source(env, NEW_OPPS, INTERVAL_OPPS, self.service_div))
-        event_log = (self.env.now, "SOURCE_A", "SOURCE")
+        event_log = Log_Event(self.env.now, "SOURCE_A", "SOURCE", "CREATE")
         record.add_sim_event(event_log)
 
     def source(self, env, number, interval, service_div):
@@ -130,7 +135,7 @@ class Opportunity:
         """Opportunity arrives, is served or abandon."""
         arrive = env.now
         print(f'{arrive:.2f} {name}: NEW OPP')
-        event_log = (self.env.now, name, "OPP")
+        event_log = Log_Event(self.env.now, name, "OPP", "CREATE")
         record.add_sim_event(event_log)
 
         with service_div.request() as req:
@@ -143,15 +148,23 @@ class Opportunity:
             if req in results:
                 # We got to the project
                 print(f'{env.now:.2f} {name}: Waiting {wait:.2f}')
+                event_log = Log_Event(self.env.now, name, "OPP", "RA_USE")
+                record.add_sim_event(event_log)
 
                 tib = random.expovariate(1.0 / time_in_queue)
                 yield env.timeout(tib)
+
+                event_log = Log_Event(self.env.now, name, "OPP", "RA_FINISH")
+                record.add_sim_event(event_log)
+
                 print(f'{env.now:.2f} {name}: Finished')
 
             else:
                 # We reneged
                 print(f'{env.now:.2f} {name}: RENEGED after {wait:.2f}')
 
+                event_log = Log_Event(self.env.now, name, "OPP", "RA_RENEGE")
+                record.add_sim_event(event_log)
 
 #
 #    _____  _               _
@@ -228,9 +241,10 @@ class OppEntity(pygame.sprite.Sprite):
     def __init__(self, opp_info, location):
         super(OppEntity, self).__init__()
         self.info = opp_info
-        self.time = opp_info[0]
-        self.name = opp_info[1]
-        self.type = opp_info[2]
+        self.time = opp_info.time
+        self.name = opp_info.name
+        self.type = opp_info.type
+        self.action = opp_info.action
         self.location = location
 
         self.surf = pygame.Surface((50, 50), pygame.SRCALPHA)
@@ -246,13 +260,15 @@ class OppEntity(pygame.sprite.Sprite):
         self.rect.y += (self.motion_speed * sin_rads)
         self.rect.x += (self.motion_speed * cos_rads)
 
+
 class SourceEntity(pygame.sprite.Sprite):
     def __init__(self, source_info, location):
         super(SourceEntity, self).__init__()
         self.info = source_info
-        self.time = source_info[0]
-        self.name = source_info[1]
-        self.type = source_info[2]
+        self.time = source_info.time
+        self.name = source_info.name
+        self.type = source_info.type
+        self.action = source_info.action
         self.location = location
 
         self.surf = pygame.Surface((100, 100), pygame.SRCALPHA)
@@ -265,9 +281,10 @@ class ResourceEntity(pygame.sprite.Sprite):
     def __init__(self, resource_info, location):
         super(ResourceEntity, self).__init__()
         self.info = resource_info
-        self.time = resource_info[0]
-        self.name = resource_info[1]
-        self.type = resource_info[2]
+        self.time = resource_info.time
+        self.name = resource_info.name
+        self.type = resource_info.type
+        self.action = resource_info.action
         self.location = location
 
         self.surf = pygame.Surface((100, 100), pygame.SRCALPHA)
@@ -288,27 +305,25 @@ class SIMScene(Scene):
         self.PLACED_GROUP = pygame.sprite.Group()
 
     def sim_create_resource(self, create_resource_event):
-        if create_resource_event[1] == "RESOURCE_A":
+        if create_resource_event.name == "RESOURCE_A":
             new_resource = ResourceEntity(create_resource_event, self.scene_setup["RESOURCE_A"])
             self.PLACED_GROUP.add(new_resource)
-            print("GOT HERE!!")
             print(new_resource.rect)
 
     def sim_create_source(self, create_source_event):
-        if create_source_event[1] == "SOURCE_A":
+        if create_source_event.name == "SOURCE_A":
             new_source = SourceEntity(create_source_event, self.scene_setup["SOURCE_A"])
             self.PLACED_GROUP.add(new_source)
 
     def process_sim_event(self):
         next_sim_event = record.sim_queue.popleft()
-        if next_sim_event[2] == "SOURCE":
+        if (next_sim_event.type == "SOURCE") and (next_sim_event.action == "CREATE"):
             self.sim_create_source(next_sim_event)
-        if next_sim_event[2] == "OPP":
+        if (next_sim_event.type == "OPP") and (next_sim_event.action == "CREATE"):
             new_opp = OppEntity(next_sim_event, self.scene_setup["SOURCE_A"])
             self.LOST_GROUP.add(new_opp)
-        if next_sim_event[2] == "RESOURCE":
+        if (next_sim_event.type == "RESOURCE") and (next_sim_event.action == "CREATE"):
             self.sim_create_resource(next_sim_event)
-
 
     def process_input(self, events, pressed_keys):
         for event in events:
