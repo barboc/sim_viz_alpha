@@ -14,6 +14,7 @@ import random
 import sys
 from collections import deque, namedtuple
 import math
+import pprint
 
 #     _____      _
 #    / ____|    | |
@@ -63,15 +64,20 @@ RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 CHOCOLATE = (210, 105, 30)
+LIGHT_GREEN = (000, 200, 100)
 
 #SIM
 RANDOM_SEED = 42
 random.seed(RANDOM_SEED)
-NEW_OPPS = 5  # Total number of opportunities
+NEW_OPPS = 10  # Total number of opportunities
 INTERVAL_OPPS = 10.0  # Generate new opportunities roughly every x seconds
 MIN_PATIENCE = 1  # Min. customer patience
 MAX_PATIENCE = 3  # Max. customer patience
+RES_A_CAPACITY = 1  # Capacity for Resource A
+RES_A_TIME = 10  # Time expect to use resource
 
+# VIZ
+SIM_SPEED = 200 # Set to 1000 to match milli-sec speed of pygame
 
 #     ____  ____       _ ______ _____ _______ _____
 #    / __ \|  _ \     | |  ____/ ____|__   __/ ____|
@@ -93,7 +99,9 @@ class SIMObserver:
 
     def add_sim_event(self, sim_event):
         self.sim_queue.append(sim_event)
-        print(self.sim_queue)
+
+    def print_deque(self):
+        pprint.pprint(self.sim_queue)
 
 
 #     _____ _____ __  __
@@ -107,18 +115,22 @@ class SIMObserver:
 class Source:
     def __init__(self, env):
         self.env = env
-        self.service_div = simpy.Resource(self.env, capacity=1)
-        event_log = Log_Event(self.env.now, "RESOURCE_A", "RESOURCE", "CREATE")
+        self.service_div = simpy.Resource(self.env, capacity=RES_A_CAPACITY)
+
+        # LOG FIRST RESOURCE CREATE***********
+        event_log = Log_Event(round(self.env.now, 2), "RESOURCE_A", "RESOURCE", "CREATE")
         record.add_sim_event(event_log)
 
         self.env.process(self.source(env, NEW_OPPS, INTERVAL_OPPS, self.service_div))
-        event_log = Log_Event(self.env.now, "SOURCE_A", "SOURCE", "CREATE")
+
+        # LOG FIRST SOURCE CREATE***********
+        event_log = Log_Event(round(self.env.now, 2), "SOURCE_A", "SOURCE", "CREATE")
         record.add_sim_event(event_log)
 
     def source(self, env, number, interval, service_div):
         """Source generates opportunities randomly"""
         for i in range(number):
-            opp = Opportunity(env, f'Opp{i}', service_div, time_in_queue=12.0)
+            opp = Opportunity(env, f'Opp{i}', service_div, time_in_queue=RES_A_TIME)
             t = random.expovariate(1.0 / interval)
             yield env.timeout(t)
 
@@ -134,9 +146,12 @@ class Opportunity:
     def create_opp(self, env, name, service_div, time_in_queue):
         """Opportunity arrives, is served or abandon."""
         arrive = env.now
-        print(f'{arrive:.2f} {name}: NEW OPP')
-        event_log = Log_Event(self.env.now, name, "OPP", "CREATE")
+
+        # LOG OPP CREATE***********
+        event_log = Log_Event(round(self.env.now, 2), name, "OPP", "CREATE")
         record.add_sim_event(event_log)
+
+        yield env.timeout(10)  # ***temp delay before resource req for debug...remove later
 
         with service_div.request() as req:
             patience = random.uniform(MIN_PATIENCE, MAX_PATIENCE)
@@ -146,24 +161,20 @@ class Opportunity:
             wait = env.now - arrive
 
             if req in results:
-                # We got to the project
-                print(f'{env.now:.2f} {name}: Waiting {wait:.2f}')
-                event_log = Log_Event(self.env.now, name, "OPP", "RA_USE")
+                # LOG OPP GET RESOURCE***********
+                event_log = Log_Event(round(self.env.now, 2), name, "OPP", "RA_USE")
                 record.add_sim_event(event_log)
 
                 tib = random.expovariate(1.0 / time_in_queue)
                 yield env.timeout(tib)
 
-                event_log = Log_Event(self.env.now, name, "OPP", "RA_FINISH")
+                # LOG OPP FINISH***********
+                event_log = Log_Event(round(self.env.now, 2), name, "OPP", "RA_FINISH")
                 record.add_sim_event(event_log)
 
-                print(f'{env.now:.2f} {name}: Finished')
-
             else:
-                # We reneged
-                print(f'{env.now:.2f} {name}: RENEGED after {wait:.2f}')
-
-                event_log = Log_Event(self.env.now, name, "OPP", "RA_RENEGE")
+                # LOG OPP RENEGE***********
+                event_log = Log_Event(round(self.env.now, 2), name, "OPP", "RA_RENEGE")
                 record.add_sim_event(event_log)
 
 #
@@ -185,7 +196,6 @@ class Director:
         x_out = event.type == pygame.QUIT
         ctrl = pressed_keys[pygame.K_LCTRL] or pressed_keys[pygame.K_RCTRL]
         q = pressed_keys[pygame.K_q]
-
         return x_out or (ctrl and q)
 
     def action(self):
@@ -246,19 +256,31 @@ class OppEntity(pygame.sprite.Sprite):
         self.type = opp_info.type
         self.action = opp_info.action
         self.location = location
+        self.color = LIGHT_GREEN
 
         self.surf = pygame.Surface((50, 50), pygame.SRCALPHA)
         self.rect = self.surf.get_rect(center=self.location)
-        self.light_green = (000, 200, 100, 255)
-        pygame.draw.polygon(self.surf, self.light_green, [(12, 0), (36, 0), (50, 25), (36, 50), (12, 50), (0, 25)])
+        pygame.draw.polygon(self.surf, self.color, [(12, 0), (36, 0), (50, 25), (36, 50), (12, 50), (0, 25)])
+
+        self.text = pygame.font.Font(None, 24).render(self.name, True, BLACK)
+        self.text_rect = self.text.get_rect()
+        self.text_rect.centerx = 50 // 2
+        self.text_rect.bottom = 35
+        self.surf.blit(self.text, self.text_rect)
+
         self.default_motion_rads = math.radians(random.randint(0, 360))
-        self.motion_speed = 12
+        self.motion_speed = 6
 
     def update(self, *args):
         cos_rads = math.cos(self.default_motion_rads)
         sin_rads = math.sin(self.default_motion_rads)
         self.rect.y += (self.motion_speed * sin_rads)
         self.rect.x += (self.motion_speed * cos_rads)
+
+    def draw(self, color):
+        pygame.draw.polygon(self.surf, color, [(12, 0), (36, 0), (50, 25), (36, 50), (12, 50), (0, 25)])
+        self.surf.blit(self.text, self.text_rect)
+
 
 
 class SourceEntity(pygame.sprite.Sprite):
@@ -298,9 +320,14 @@ class SIMScene(Scene):
         super().__init__()
         print("VIZ Scene")
 
+        # Locations for scene items
         self.scene_setup = {"SOURCE_A": (200, 200),
                             "RESOURCE_A": (1500, 300)}
 
+        # Dict of all game entities by name
+        self.scene_entity = {}
+
+        # Sprite groups to control movement and collisions around static entities
         self.LOST_GROUP = pygame.sprite.Group()
         self.PLACED_GROUP = pygame.sprite.Group()
 
@@ -308,22 +335,43 @@ class SIMScene(Scene):
         if create_resource_event.name == "RESOURCE_A":
             new_resource = ResourceEntity(create_resource_event, self.scene_setup["RESOURCE_A"])
             self.PLACED_GROUP.add(new_resource)
-            print(new_resource.rect)
+            self.scene_entity[new_resource.name] = new_resource
 
     def sim_create_source(self, create_source_event):
         if create_source_event.name == "SOURCE_A":
             new_source = SourceEntity(create_source_event, self.scene_setup["SOURCE_A"])
             self.PLACED_GROUP.add(new_source)
+            self.scene_entity[new_source.name] = new_source
 
     def process_sim_event(self):
         next_sim_event = record.sim_queue.popleft()
+
+        print(" ")
+        pprint.pprint(next_sim_event)
+        pprint.pprint(f'Game Time {pygame.time.get_ticks()} with SIM Time {next_sim_event.time * SIM_SPEED}')
+
         if (next_sim_event.type == "SOURCE") and (next_sim_event.action == "CREATE"):
             self.sim_create_source(next_sim_event)
         if (next_sim_event.type == "OPP") and (next_sim_event.action == "CREATE"):
             new_opp = OppEntity(next_sim_event, self.scene_setup["SOURCE_A"])
             self.LOST_GROUP.add(new_opp)
+            self.scene_entity[new_opp.name] = new_opp
         if (next_sim_event.type == "RESOURCE") and (next_sim_event.action == "CREATE"):
             self.sim_create_resource(next_sim_event)
+        if (next_sim_event.type == "OPP") and (next_sim_event.action == "RA_USE"):
+            opp_obj = self.scene_entity.get(next_sim_event.name)
+            self.LOST_GROUP.add(opp_obj)
+            self.PLACED_GROUP.remove(opp_obj)
+            opp_obj.rect.center = self.scene_setup.get("RESOURCE_A")
+        if (next_sim_event.type == "OPP") and (next_sim_event.action == "RA_FINISH"):
+            opp_obj = self.scene_entity.get(next_sim_event.name)
+            self.LOST_GROUP.add(opp_obj)
+            self.PLACED_GROUP.remove(opp_obj)
+            opp_obj.rect.center = (1500, 900)
+            opp_obj.draw(WHITE)
+        if (next_sim_event.type == "OPP") and (next_sim_event.action == "RA_RENEGE"):
+            opp_obj = self.scene_entity.get(next_sim_event.name)
+            opp_obj.draw(CHOCOLATE)
 
     def process_input(self, events, pressed_keys):
         for event in events:
@@ -333,11 +381,15 @@ class SIMScene(Scene):
 
         queue_peek = len(record.sim_queue) > 0
         while queue_peek:
-            if (record.sim_queue[0][0] * 100) <= pygame.time.get_ticks():
+            if (record.sim_queue[0][0] * SIM_SPEED) <= pygame.time.get_ticks():
                 self.process_sim_event()
                 queue_peek = len(record.sim_queue) > 0
             else:
                 queue_peek = False
+
+        # Event queue empty, end viz
+#        if len(record.sim_queue) == 0:
+#            self.terminate()
 
     def update(self):
         for opp_sprite in self.LOST_GROUP.sprites():
@@ -365,7 +417,10 @@ class SIMScene(Scene):
 
     def terminate(self):
         self.next_scene = None
-
+        print("Queue Empty...OVER!!!")
+        print("LOST:  ", self.LOST_GROUP)
+        print("PLACED:  ", self.PLACED_GROUP)
+        pprint.pprint(self.scene_entity)
 
 #    __  __       _
 #   |  \/  |     (_)
@@ -386,6 +441,7 @@ if __name__ == "__main__":
     print('SIM START')
     env.run()
     print('SIM OVER')
+    record.print_deque()
 
     # RUN SIM VIZ
     print('VIZ START')
@@ -394,7 +450,7 @@ if __name__ == "__main__":
     game_dir.action()
     print('VIZ OVER')
     pygame.quit()
-    print('END SIM ALPHA.........................')
+    print('END VIZ SIM ALPHA.........................')
     sys.exit()
 
 
