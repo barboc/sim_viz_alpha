@@ -1,4 +1,3 @@
-
 #    _____                            _
 #   |_   _|                          | |
 #     | |  _ __ ___  _ __   ___  _ __| |_ ___
@@ -48,7 +47,7 @@ SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
 
 SIZE = (SCREEN_WIDTH, SCREEN_HEIGHT)
-TITLE = "Simulation: TEST"
+TITLE = "Simulation: ALPHA"
 
 # Initialize the game screen
 SCREEN = pygame.display.set_mode(SIZE)
@@ -65,6 +64,8 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 CHOCOLATE = (210, 105, 30)
 LIGHT_GREEN = (000, 200, 100)
+LIGHT_BLUE = (000, 000, 200)
+LIGHT_GRAY = (200, 200, 200)
 
 #SIM
 RANDOM_SEED = 42
@@ -77,7 +78,7 @@ RES_A_CAPACITY = 1  # Capacity for Resource A
 RES_A_TIME = 10  # Time expect to use resource
 
 # VIZ
-SIM_SPEED = 200 # Set to 1000 to match milli-sec speed of pygame
+SIM_SPEED = 200  # Set to 1000 to match milli-sec speed of pygame
 
 #     ____  ____       _ ______ _____ _______ _____
 #    / __ \|  _ \     | |  ____/ ____|__   __/ ____|
@@ -121,6 +122,7 @@ class Source:
         event_log = Log_Event(round(self.env.now, 2), "RESOURCE_A", "RESOURCE", "CREATE")
         record.add_sim_event(event_log)
 
+        # Add first sim process and pass the resource.
         self.env.process(self.source(env, NEW_OPPS, INTERVAL_OPPS, self.service_div))
 
         # LOG FIRST SOURCE CREATE***********
@@ -133,6 +135,7 @@ class Source:
             opp = Opportunity(env, f'Opp{i}', service_div, time_in_queue=RES_A_TIME)
             t = random.expovariate(1.0 / interval)
             yield env.timeout(t)
+
 
 class Opportunity:
     def __init__(self, env, name, service_div, time_in_queue):
@@ -158,7 +161,7 @@ class Opportunity:
             # Wait for the Service team or abort at the end of our tether
             results = yield req | env.timeout(patience)
 
-            wait = env.now - arrive
+            wait = env.now - arrive  # Is this used???
 
             if req in results:
                 # LOG OPP GET RESOURCE***********
@@ -282,7 +285,6 @@ class OppEntity(pygame.sprite.Sprite):
         self.surf.blit(self.text, self.text_rect)
 
 
-
 class SourceEntity(pygame.sprite.Sprite):
     def __init__(self, source_info, location):
         super(SourceEntity, self).__init__()
@@ -292,11 +294,17 @@ class SourceEntity(pygame.sprite.Sprite):
         self.type = source_info.type
         self.action = source_info.action
         self.location = location
+        self.color = LIGHT_GRAY
 
         self.surf = pygame.Surface((100, 100), pygame.SRCALPHA)
         self.rect = self.surf.get_rect(center=self.location)
-        self.light_grey = (200, 200, 200)
-        pygame.draw.polygon(self.surf, self.light_grey, [(0, 0), (100, 0), (50, 100)])
+        pygame.draw.polygon(self.surf, self.color, [(0, 0), (100, 0), (50, 100)])
+
+        self.text = pygame.font.Font(None, 18).render(self.name, True, BLACK)
+        self.text_rect = self.text.get_rect()
+        self.text_rect.centerx = 100 // 2
+        self.text_rect.top = 5
+        self.surf.blit(self.text, self.text_rect)
 
 
 class ResourceEntity(pygame.sprite.Sprite):
@@ -308,28 +316,47 @@ class ResourceEntity(pygame.sprite.Sprite):
         self.type = resource_info.type
         self.action = resource_info.action
         self.location = location
+        self.color = LIGHT_BLUE
 
         self.surf = pygame.Surface((100, 100), pygame.SRCALPHA)
         self.rect = self.surf.get_rect(center=self.location)
-        self.light_blue = (000, 000, 200)
-        pygame.draw.ellipse(self.surf, self.light_blue, self.surf.get_rect())
+        pygame.draw.ellipse(self.surf, self.color, self.surf.get_rect())
 
+        self.text = pygame.font.Font(None, 18).render(self.name, True, BLACK)
+        self.text_rect = self.text.get_rect()
+        self.text_rect.centerx = 100 // 2
+        self.text_rect.centery = 100 // 2
+        self.surf.blit(self.text, self.text_rect)
 
 class SIMScene(Scene):
     def __init__(self):
         super().__init__()
         print("VIZ Scene")
 
+        # Obj Properties
+        self.empty_deque = False
+
         # Locations for scene items
         self.scene_setup = {"SOURCE_A": (200, 200),
-                            "RESOURCE_A": (1500, 300)}
+                            "RESOURCE_A": (1500, 300),
+                            "END_LOC": (1500, 900)}
 
-        # Dict of all game entities by name
+        # Dict of all scene sim entities by name
         self.scene_entity = {}
 
         # Sprite groups to control movement and collisions around static entities
         self.LOST_GROUP = pygame.sprite.Group()
         self.PLACED_GROUP = pygame.sprite.Group()
+
+        # Scene Common Text
+        self.title_text = pygame.font.Font(None, 64).render("SIM ALPHA", 1, WHITE)
+        self.over_text = pygame.font.Font(None, 64).render("Queue Empty...OVER!!!", 1, RED)
+        self.title_rect = self.title_text.get_rect()
+        self.over_rect = self.over_text.get_rect()
+        self.title_rect.centerx = SCREEN_WIDTH // 2
+        self.title_rect.bottom = SCREEN_HEIGHT // 2
+        self.over_rect.centerx = SCREEN_WIDTH // 2
+        self.over_rect.bottom = (SCREEN_HEIGHT // 2) + 300
 
     def sim_create_resource(self, create_resource_event):
         if create_resource_event.name == "RESOURCE_A":
@@ -344,20 +371,22 @@ class SIMScene(Scene):
             self.scene_entity[new_source.name] = new_source
 
     def process_sim_event(self):
+        # Pop next event off queue
         next_sim_event = record.sim_queue.popleft()
 
         print(" ")
         pprint.pprint(next_sim_event)
         pprint.pprint(f'Game Time {pygame.time.get_ticks()} with SIM Time {next_sim_event.time * SIM_SPEED}')
 
+        # Process each log event
         if (next_sim_event.type == "SOURCE") and (next_sim_event.action == "CREATE"):
             self.sim_create_source(next_sim_event)
+        if (next_sim_event.type == "RESOURCE") and (next_sim_event.action == "CREATE"):
+            self.sim_create_resource(next_sim_event)
         if (next_sim_event.type == "OPP") and (next_sim_event.action == "CREATE"):
             new_opp = OppEntity(next_sim_event, self.scene_setup["SOURCE_A"])
             self.LOST_GROUP.add(new_opp)
             self.scene_entity[new_opp.name] = new_opp
-        if (next_sim_event.type == "RESOURCE") and (next_sim_event.action == "CREATE"):
-            self.sim_create_resource(next_sim_event)
         if (next_sim_event.type == "OPP") and (next_sim_event.action == "RA_USE"):
             opp_obj = self.scene_entity.get(next_sim_event.name)
             self.LOST_GROUP.add(opp_obj)
@@ -367,7 +396,7 @@ class SIMScene(Scene):
             opp_obj = self.scene_entity.get(next_sim_event.name)
             self.LOST_GROUP.add(opp_obj)
             self.PLACED_GROUP.remove(opp_obj)
-            opp_obj.rect.center = (1500, 900)
+            opp_obj.rect.center = self.scene_setup.get("END_LOC")
             opp_obj.draw(WHITE)
         if (next_sim_event.type == "OPP") and (next_sim_event.action == "RA_RENEGE"):
             opp_obj = self.scene_entity.get(next_sim_event.name)
@@ -377,7 +406,7 @@ class SIMScene(Scene):
         for event in events:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
-                    self.next_scene = None
+                    self.terminate()
 
         queue_peek = len(record.sim_queue) > 0
         while queue_peek:
@@ -388,8 +417,8 @@ class SIMScene(Scene):
                 queue_peek = False
 
         # Event queue empty, end viz
-#        if len(record.sim_queue) == 0:
-#            self.terminate()
+        if len(record.sim_queue) == 0:
+            self.empty_deque = True
 
     def update(self):
         for opp_sprite in self.LOST_GROUP.sprites():
@@ -399,16 +428,15 @@ class SIMScene(Scene):
                 self.LOST_GROUP.remove(opp_sprite)
                 self.PLACED_GROUP.add(opp_sprite)
 
-
     def render(self):
         # Set background color
         SCREEN.fill(BLACK)
+
         # Render Text
-        text = pygame.font.Font(None, 64).render("SIM ALPHA", 1, WHITE)
-        rect = text.get_rect()
-        rect.centerx = SCREEN_WIDTH // 2
-        rect.bottom = SCREEN_HEIGHT // 2
-        SCREEN.blit(text, rect)
+        SCREEN.blit(self.title_text, self.title_rect)
+        if self.empty_deque:
+            SCREEN.blit(self.over_text, self.over_rect)
+
         # Render SIM Objects
         for entity in self.PLACED_GROUP:
             SCREEN.blit(entity.surf, entity.rect)
@@ -416,11 +444,11 @@ class SIMScene(Scene):
             SCREEN.blit(entity.surf, entity.rect)
 
     def terminate(self):
-        self.next_scene = None
-        print("Queue Empty...OVER!!!")
-        print("LOST:  ", self.LOST_GROUP)
+        print("\nQueue Empty...OVER!!!")
+        print("LOST:    ", self.LOST_GROUP)
         print("PLACED:  ", self.PLACED_GROUP)
         pprint.pprint(self.scene_entity)
+        self.next_scene = None
 
 #    __  __       _
 #   |  \/  |     (_)
@@ -431,9 +459,10 @@ class SIMScene(Scene):
 #
 #
 # START THE SIM
+
 if __name__ == "__main__":
     # Setup and start the simulation
-    print('START VIZ SIM ALPHA....................')
+    print('START VIZ SIM ALPHA......................')
 
     # RUN SIMULATION FIRST
     record = SIMObserver()
