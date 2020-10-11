@@ -116,37 +116,37 @@ class SIMObserver:
 class Source:
     def __init__(self, env):
         self.env = env
-        self.service_div = simpy.Resource(self.env, capacity=RES_A_CAPACITY)
+        self.res_div = simpy.Resource(self.env, capacity=RES_A_CAPACITY)
 
         # LOG FIRST RESOURCE CREATE***********
         event_log = Log_Event(round(self.env.now, 2), "RESOURCE_A", "RESOURCE", "CREATE")
         record.add_sim_event(event_log)
 
         # Add first sim process and pass the resource.
-        self.env.process(self.source(env, NEW_OPPS, INTERVAL_OPPS, self.service_div))
+        self.env.process(self.source(env, NEW_OPPS, INTERVAL_OPPS, self.res_div))
 
         # LOG FIRST SOURCE CREATE***********
         event_log = Log_Event(round(self.env.now, 2), "SOURCE_A", "SOURCE", "CREATE")
         record.add_sim_event(event_log)
 
-    def source(self, env, number, interval, service_div):
+    def source(self, env, number, interval, res_div):
         """Source generates opportunities randomly"""
         for i in range(number):
-            opp = Opportunity(env, f'Opp{i}', service_div, time_in_queue=RES_A_TIME)
+            opp = Opportunity(env, f'Opp{i}', res_div, time_in_queue=RES_A_TIME)
             t = random.expovariate(1.0 / interval)
             yield env.timeout(t)
 
 
 class Opportunity:
-    def __init__(self, env, name, service_div, time_in_queue):
+    def __init__(self, env, name, res_div, time_in_queue):
         self.env = env
         self.name = name
-        self.service_div = service_div
+        self.res_div = res_div
         self.time_in_queue = time_in_queue
 
-        self.env.process(self.create_opp(self.env, self.name, self.service_div, self.time_in_queue))
+        self.env.process(self.create_opp(self.env, self.name, self.res_div, self.time_in_queue))
 
-    def create_opp(self, env, name, service_div, time_in_queue):
+    def create_opp(self, env, name, res_div, time_in_queue):
         """Opportunity arrives, is served or abandon."""
         arrive = env.now
 
@@ -156,9 +156,9 @@ class Opportunity:
 
         yield env.timeout(10)  # ***temp delay before resource req for debug...remove later
 
-        with service_div.request() as req:
+        with res_div.request() as req:
             patience = random.uniform(MIN_PATIENCE, MAX_PATIENCE)
-            # Wait for the Service team or abort at the end of our tether
+            # Wait for the resource or abort at the end
             results = yield req | env.timeout(patience)
 
             wait = env.now - arrive  # Is this used???
